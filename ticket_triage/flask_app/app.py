@@ -106,7 +106,14 @@ if app_mode == "Batch Factory":
                     text = str(row[text_col])
                     pred = engine.predict(text, mode=risk_mode.lower())
                     
-                    # Risk score is already calculated in engine now
+                    # ===================================================
+                    # 🛑 CRASH PROTECTION: CHECK FOR ENGINE FAILURE
+                    # ===================================================
+                    if pred.get('decision') == "ERROR":
+                        st.error(f"SYSTEM FAILURE: {pred.get('reason')}")
+                        st.stop() # Stop processing immediately
+                    
+                    # If safe, proceed normally
                     risk_score = pred['metrics']['risk_score']
                     
                     results.append({
@@ -294,4 +301,4 @@ elif app_mode == "Sandbox Debugger":
             
             # Debug view for weights
             with st.expander("View Risk Calculation"):
-                st.json(res['metrics'])
+                st.json(res.get('metrics', {}))
