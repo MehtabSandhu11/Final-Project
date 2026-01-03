@@ -4,29 +4,42 @@ import numpy as np
 
 class RiskEngine:
     def __init__(self, models_dir="models"):
-        self.models_dir = models_dir
+        # --- PATH FIX: Handle Cloud Deployment Paths ---
+        # If the default "models" relative path is used, we convert it to an absolute path
+        # based on where THIS python file (risk_engine.py) is located.
+        if models_dir == "models":
+            current_file_path = os.path.abspath(__file__)
+            current_dir = os.path.dirname(current_file_path)
+            self.models_dir = os.path.join(current_dir, "models")
+        else:
+            self.models_dir = models_dir
+            
         self.loaded = False
         
         try:
+            # Debug Print to see where it is looking (Check your logs!)
+            print(f"🔍 Looking for models in: {self.models_dir}")
+            
             # Load all layers
-            self.vec_risk = joblib.load(os.path.join(models_dir, "tfidf_vectorizer.joblib"))
-            self.model_risk = joblib.load(os.path.join(models_dir, "risk_model_lr.joblib"))
+            self.vec_risk = joblib.load(os.path.join(self.models_dir, "tfidf_vectorizer.joblib"))
+            self.model_risk = joblib.load(os.path.join(self.models_dir, "risk_model_lr.joblib"))
             
-            self.vec_intent = joblib.load(os.path.join(models_dir, "tfidf_vectorizer_intent.joblib"))
-            self.model_intent = joblib.load(os.path.join(models_dir, "intent_classifier.joblib"))
+            self.vec_intent = joblib.load(os.path.join(self.models_dir, "tfidf_vectorizer_intent.joblib"))
+            self.model_intent = joblib.load(os.path.join(self.models_dir, "intent_classifier.joblib"))
             
-            self.vec_issue = joblib.load(os.path.join(models_dir, "tfidf_vectorizer_issue.joblib"))
-            self.model_issue = joblib.load(os.path.join(models_dir, "issue_classifier.joblib"))
+            self.vec_issue = joblib.load(os.path.join(self.models_dir, "tfidf_vectorizer_issue.joblib"))
+            self.model_issue = joblib.load(os.path.join(self.models_dir, "issue_classifier.joblib"))
             
             self.loaded = True
             print("✅ Risk Engine Loaded.")
             
-        except FileNotFoundError:
-            print(f"❌ CRITICAL ERROR: Models not found in '{models_dir}'.")
+        except FileNotFoundError as e:
+            print(f"❌ CRITICAL ERROR: Models not found in '{self.models_dir}'.")
+            print(f"   Specific Missing File Error: {e}")
             self.loaded = False
 
     def predict(self, text, mode="balanced"):
-        if not self.loaded: return {"decision": "ERROR", "reason": "Models Offline"}
+        if not self.loaded: return {"decision": "ERROR", "reason": "Models Offline (Check Logs)"}
         
         clean_text = str(text).lower().strip()
         
@@ -46,8 +59,6 @@ class RiskEngine:
         raw_issue_label = self.model_issue.classes_[np.argmax(issue_probs)]
         
         # LOGIC CHANGE 1: Null Confidence Fallback
-        # If the model is confused (low confidence), assume GENERAL_SUPPORT
-        # This prevents "Praise" being misclassified as "Bugs"
         CONFIDENCE_THRESHOLD = 0.50
         if max_issue_conf < CONFIDENCE_THRESHOLD:
             issue_label = "GENERAL_SUPPORT"
@@ -55,37 +66,28 @@ class RiskEngine:
             issue_label = raw_issue_label
 
         # --- LOGIC CHANGE 2: POLICY WEIGHTS ---
-        # Instead of just "Veto", we add risk based on the severity of the issue.
-        # This allows for nuanced decisions.
         RISK_WEIGHTS = {
-            "DATA_LOSS": 0.5,          # Catastrophic
-            "ACCOUNT_ACCESS": 0.5,     # Security Critical
-            "PAYMENT_PROBLEM": 0.4,    # High Financial
-            "SOFTWARE_BUG": 0.3,       # Medium
-            "HARDWARE_FAILURE": 0.3,   # Medium
-            "CONNECTIVITY_ISSUE": 0.2, # Low-Medium
-            "DELIVERY_PROBLEM": 0.2,   # Low-Medium
-            "GENERAL_SUPPORT": 0.0     # Low
+            "DATA_LOSS": 0.5,          
+            "ACCOUNT_ACCESS": 0.5,     
+            "PAYMENT_PROBLEM": 0.4,    
+            "SOFTWARE_BUG": 0.3,       
+            "HARDWARE_FAILURE": 0.3,   
+            "CONNECTIVITY_ISSUE": 0.2, 
+            "DELIVERY_PROBLEM": 0.2,   
+            "GENERAL_SUPPORT": 0.0     
         }
         
-        # Fallback for unknown labels
         policy_risk_adder = RISK_WEIGHTS.get(issue_label, 0.1)
         
-        # CALCULATE COMPOSITE RISK
-        # Base Risk + Policy Weight
-        # e.g., 0.1 (Safe Text) + 0.5 (Data Loss) = 0.6 (Unsafe)
         final_risk_score = base_risk + policy_risk_adder
-        
-        # Cap at 1.0
         final_risk_score = min(1.0, final_risk_score)
         final_safe_prob = 1.0 - final_risk_score
 
         # --- DECISION THRESHOLDS ---
-        # We adjust the acceptance threshold based on Mode
         thresholds = {
-            "conservative": 0.85, # Needs 85% safety (Very hard to automate)
-            "balanced": 0.65,     # Needs 65% safety
-            "aggressive": 0.50    # Needs 50% safety
+            "conservative": 0.85, 
+            "balanced": 0.65,     
+            "aggressive": 0.50    
         }
         required_safety = thresholds.get(mode, 0.65)
         
